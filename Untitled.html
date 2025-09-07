@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brain Dump Station</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+        .header { text-align: center; margin-bottom: 30px; }
+        .header h1 { color: #7c3aed; margin-bottom: 10px; }
+        .input-section { background: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .quick-input { width: calc(100% - 80px); padding: 10px; border: 2px solid #ddd; border-radius: 5px; font-size: 16px; }
+        .add-btn { background: #7c3aed; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-left: 10px; }
+        .add-btn:hover { background: #5b21b6; }
+        .main-input { width: 100%; padding: 15px; border: 2px solid #ddd; border-radius: 5px; font-size: 16px; resize: vertical; }
+        .stats { display: flex; gap: 10px; margin-bottom: 20px; }
+        .stat-card { background: white; padding: 15px; border-radius: 10px; text-align: center; flex: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .thought { background: white; padding: 15px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); position: relative; }
+        .thought.task { border-left: 5px solid #3b82f6; }
+        .thought.idea { border-left: 5px solid #fbbf24; }
+        .thought.urgent { border-left: 5px solid #ef4444; }
+        .thought.feeling { border-left: 5px solid #ec4899; }
+        .thought.later { border-left: 5px solid #8b5cf6; }
+        .thought.random { border-left: 5px solid #6b7280; }
+        .thought.processed { opacity: 0.6; text-decoration: line-through; }
+        .category-tag { display: inline-block; background: #e5e7eb; color: #374151; padding: 3px 8px; border-radius: 15px; font-size: 12px; margin-right: 10px; }
+        .timestamp { color: #6b7280; font-size: 12px; float: right; }
+        .controls { margin-top: 10px; }
+        .control-btn { background: #f3f4f6; border: 1px solid #d1d5db; padding: 5px 10px; border-radius: 3px; cursor: pointer; margin-right: 5px; font-size: 12px; }
+        .control-btn:hover { background: #e5e7eb; }
+        .filters { margin-bottom: 20px; }
+        .filter-btn { background: #f3f4f6; border: 1px solid #d1d5db; padding: 8px 15px; border-radius: 20px; cursor: pointer; margin-right: 10px; margin-bottom: 10px; }
+        .filter-btn.active { background: #7c3aed; color: white; }
+        .export-btn { background: #10b981; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
+        .export-btn:hover { background: #059669; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🧠 Brain Dump Station</h1>
+        <p>Capture every thought - we'll sort it out later</p>
+    </div>
+
+    <div class="input-section">
+        <h3>Quick Capture</h3>
+        <input type="text" id="quickInput" class="quick-input" placeholder="Quick thought... (press Enter)" onkeypress="handleQuickEnter(event)">
+        <button class="add-btn" onclick="addQuickThought()">Add</button>
+    </div>
+
+    <div class="input-section">
+        <h3>Brain Dump</h3>
+        <textarea id="mainInput" class="main-input" rows="4" placeholder="Let it all out... stream of consciousness, random thoughts, everything bouncing around in your head."></textarea>
+        <br><br>
+        <button class="add-btn" onclick="addMainThought()">Dump It</button>
+    </div>
+
+    <div class="stats" id="stats">
+        <div class="stat-card"><strong id="taskCount">0</strong><br>Tasks</div>
+        <div class="stat-card"><strong id="ideaCount">0</strong><br>Ideas</div>
+        <div class="stat-card"><strong id="urgentCount">0</strong><br>Urgent</div>
+        <div class="stat-card"><strong id="feelingCount">0</strong><br>Feelings</div>
+        <div class="stat-card"><strong id="laterCount">0</strong><br>Later</div>
+        <div class="stat-card"><strong id="randomCount">0</strong><br>Random</div>
+    </div>
+
+    <div class="filters">
+        <button class="filter-btn active" onclick="filterThoughts('all')">All</button>
+        <button class="filter-btn" onclick="filterThoughts('task')">Tasks</button>
+        <button class="filter-btn" onclick="filterThoughts('idea')">Ideas</button>
+        <button class="filter-btn" onclick="filterThoughts('urgent')">Urgent</button>
+        <button class="filter-btn" onclick="filterThoughts('feeling')">Feelings</button>
+        <button class="filter-btn" onclick="filterThoughts('later')">Later</button>
+        <button class="filter-btn" onclick="filterThoughts('random')">Random</button>
+        <button class="filter-btn" onclick="filterThoughts('unprocessed')">Unprocessed</button>
+    </div>
+
+    <button class="export-btn" onclick="exportThoughts()" id="exportBtn" style="display:none;">Export All Thoughts</button>
+
+    <div id="thoughtsList"></div>
+
+    <script>
+        let thoughts = [];
+        let currentFilter = 'all';
+
+        // Load thoughts from localStorage
+        function loadThoughts() {
+            const saved = localStorage.getItem('brainDumpThoughts');
+            if (saved) {
+                thoughts = JSON.parse(saved);
+                displayThoughts();
+                updateStats();
+            }
+        }
+
+        // Save thoughts to localStorage
+        function saveThoughts() {
+            localStorage.setItem('brainDumpThoughts', JSON.stringify(thoughts));
+        }
+
+        // Categorize thoughts based on keywords
+        function categorizeThought(text) {
+            const lower = text.toLowerCase();
+            
+            const categories = {
+                task: ['do', 'need to', 'must', 'should', 'have to', 'remember to', 'call', 'email', 'buy', 'get', 'schedule', 'finish', 'complete'],
+                idea: ['idea', 'what if', 'maybe', 'could', 'might', 'content', 'video', 'create', 'make', 'think about'],
+                urgent: ['urgent', 'asap', 'now', 'today', 'immediately', 'emergency', 'important', 'deadline', '!!!'],
+                feeling: ['feel', 'feeling', 'worried', 'anxious', 'excited', 'frustrated', 'happy', 'sad', 'stressed', 'overwhelmed'],
+                later: ['someday', 'eventually', 'future', 'later', 'goal', 'wish', 'hope', 'dream', 'long term']
+            };
+
+            for (const [category, keywords] of Object.entries(categories)) {
+                if (keywords.some(keyword => lower.includes(keyword))) {
+                    return category;
+                }
+            }
+            return 'random';
+        }
+
+        function addThought(text) {
+            if (text.trim()) {
+                const thought = {
+                    id: Date.now(),
+                    text: text.trim(),
+                    category: categorizeThought(text),
+                    timestamp: new Date().toLocaleTimeString(),
+                    processed: false
+                };
+                thoughts.unshift(thought);
+                saveThoughts();
+                displayThoughts();
+                updateStats();
+                document.getElementById('exportBtn').style.display = 'block';
+            }
+        }
+
+        function addQuickThought() {
+            const input = document.getElementById('quickInput');
+            addThought(input.value);
+            input.value = '';
+            input.focus();
+        }
+
+        function addMainThought() {
+            const input = document.getElementById('mainInput');
+            addThought(input.value);
+            input.value = '';
+        }
+
+        function handleQuickEnter(event) {
+            if (event.key === 'Enter') {
+                addQuickThought();
+            }
+        }
+
+        function toggleProcessed(id) {
+            const thought = thoughts.find(t => t.id === id);
+            if (thought) {
+                thought.processed = !thought.processed;
+                saveThoughts();
+                displayThoughts();
+                updateStats();
+            }
+        }
+
+        function deleteThought(id) {
+            thoughts = thoughts.filter(t => t.id !== id);
+            saveThoughts();
+            displayThoughts();
+            updateStats();
+        }
+
+        function updateStats() {
+            const stats = {
+                task: thoughts.filter(t => t.category === 'task' && !t.processed).length,
+                idea: thoughts.filter(t => t.category === 'idea' && !t.processed).length,
+                urgent: thoughts.filter(t => t.category === 'urgent' && !t.processed).length,
+                feeling: thoughts.filter(t => t.category === 'feeling' && !t.processed).length,
+                later: thoughts.filter(t => t.category === 'later' && !t.processed).length,
+                random: thoughts.filter(t => t.category === 'random' && !t.processed).length
+            };
+
+            Object.keys(stats).forEach(key => {
+                document.getElementById(key + 'Count').textContent = stats[key];
+            });
+        }
+
+        function filterThoughts(filter) {
+            currentFilter = filter;
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            displayThoughts();
+        }
+
+        function displayThoughts() {
+            const container = document.getElementById('thoughtsList');
+            let filtered = thoughts;
+
+            if (currentFilter !== 'all') {
+                if (currentFilter === 'unprocessed') {
+                    filtered = thoughts.filter(t => !t.processed);
+                } else {
+                    filtered = thoughts.filter(t => t.category === currentFilter);
+                }
+            }
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;"><h3>No thoughts yet!</h3><p>Start dumping your thoughts above.</p></div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(thought => `
+                <div class="thought ${thought.category} ${thought.processed ? 'processed' : ''}">
+                    <div class="category-tag">${thought.category}</div>
+                    <div class="timestamp">${thought.timestamp}</div>
+                    <div style="margin-top: 10px;">${thought.text}</div>
+                    <div class="controls">
+                        <button class="control-btn" onclick="toggleProcessed(${thought.id})">
+                            ${thought.processed ? '↶ Unprocess' : '✓ Processed'}
+                        </button>
+                        <button class="control-btn" onclick="deleteThought(${thought.id})">🗑 Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function exportThoughts() {
+            const data = {
+                exportDate: new Date().toISOString(),
+                totalThoughts: thoughts.length,
+                thoughts: thoughts
+            };
+            
+            const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `brain-dump-${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Initialize
+        loadThoughts();
+        document.getElementById('quickInput').focus();
+    </script>
+</body>
+</html>
