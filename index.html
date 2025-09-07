@@ -12,6 +12,7 @@
         .quick-input { width: calc(100% - 80px); padding: 10px; border: 2px solid #ddd; border-radius: 5px; font-size: 16px; }
         .add-btn { background: #7c3aed; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-left: 10px; }
         .add-btn:hover { background: #5b21b6; }
+        .add-btn:disabled { background: #9ca3af; cursor: not-allowed; }
         .main-input { width: 100%; padding: 15px; border: 2px solid #ddd; border-radius: 5px; font-size: 16px; resize: vertical; }
         .stats { display: flex; gap: 10px; margin-bottom: 20px; }
         .stat-card { background: white; padding: 15px; border-radius: 10px; text-align: center; flex: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
@@ -28,30 +29,66 @@
         .controls { margin-top: 10px; }
         .control-btn { background: #f3f4f6; border: 1px solid #d1d5db; padding: 5px 10px; border-radius: 3px; cursor: pointer; margin-right: 5px; font-size: 12px; }
         .control-btn:hover { background: #e5e7eb; }
+        .control-btn:disabled { background: #f9fafb; cursor: not-allowed; opacity: 0.5; }
         .filters { margin-bottom: 20px; }
         .filter-btn { background: #f3f4f6; border: 1px solid #d1d5db; padding: 8px 15px; border-radius: 20px; cursor: pointer; margin-right: 10px; margin-bottom: 10px; }
         .filter-btn.active { background: #7c3aed; color: white; }
         .export-btn { background: #10b981; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; margin-bottom: 20px; }
         .export-btn:hover { background: #059669; }
+        .loading { display: none; text-align: center; padding: 20px; color: #666; }
+        .error { background: #fee2e2; color: #dc2626; padding: 10px; border-radius: 5px; margin-bottom: 20px; }
+        .sync-status { padding: 10px; border-radius: 5px; margin-bottom: 20px; text-align: center; }
+        .sync-status.online { background: #dcfce7; color: #166534; }
+        .sync-status.offline { background: #fef3c7; color: #92400e; }
+        .user-section { background: white; padding: 15px; border-radius: 10px; margin-bottom: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .auth-btn { background: #7c3aed; color: white; padding: 8px 16px; border: none; border-radius: 5px; cursor: pointer; margin-right: 10px; }
+        .auth-btn:hover { background: #5b21b6; }
+        .user-info { display: flex; align-items: center; gap: 10px; }
+        .user-avatar { width: 32px; height: 32px; border-radius: 50%; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🧠 Brain Dump Station</h1>
-        <p>Capture every thought - we'll sort it out later</p>
+        <p>Capture every thought - sync across all devices</p>
     </div>
+
+    <div id="syncStatus" class="sync-status offline">
+        ⚠️ Connecting to Firebase...
+    </div>
+
+    <div class="user-section">
+        <div id="authSection">
+            <div id="signedOut">
+                <p>Sign in to sync your thoughts across devices:</p>
+                <button class="auth-btn" onclick="signInWithGoogle()">Sign in with Google</button>
+            </div>
+            <div id="signedIn" style="display: none;">
+                <div class="user-info">
+                    <img id="userAvatar" class="user-avatar" src="" alt="User">
+                    <div>
+                        <div><strong id="userName"></strong></div>
+                        <div style="font-size: 12px; color: #666;" id="userEmail"></div>
+                    </div>
+                    <button class="auth-btn" onclick="signOut()" style="margin-left: auto;">Sign Out</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="errorMessage" class="error" style="display: none;"></div>
 
     <div class="input-section">
         <h3>Quick Capture</h3>
         <input type="text" id="quickInput" class="quick-input" placeholder="Quick thought... (press Enter)" onkeypress="handleQuickEnter(event)">
-        <button class="add-btn" onclick="addQuickThought()">Add</button>
+        <button class="add-btn" id="quickAddBtn" onclick="addQuickThought()">Add</button>
     </div>
 
     <div class="input-section">
         <h3>Brain Dump</h3>
         <textarea id="mainInput" class="main-input" rows="4" placeholder="Let it all out... stream of consciousness, random thoughts, everything bouncing around in your head."></textarea>
         <br><br>
-        <button class="add-btn" onclick="addMainThought()">Dump It</button>
+        <button class="add-btn" id="mainAddBtn" onclick="addMainThought()">Dump It</button>
     </div>
 
     <div class="stats" id="stats">
@@ -76,25 +113,219 @@
 
     <button class="export-btn" onclick="exportThoughts()" id="exportBtn" style="display:none;">Export All Thoughts</button>
 
+    <div id="loading" class="loading">Loading your thoughts...</div>
     <div id="thoughtsList"></div>
 
-    <script>
+    <!-- Firebase SDK -->
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { 
+            getFirestore, 
+            collection, 
+            doc, 
+            addDoc, 
+            updateDoc, 
+            deleteDoc, 
+            query, 
+            orderBy, 
+            onSnapshot, 
+            where,
+            serverTimestamp 
+        } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { 
+            getAuth, 
+            GoogleAuthProvider, 
+            signInWithPopup, 
+            signOut as firebaseSignOut, 
+            onAuthStateChanged 
+        } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+        // Firebase configuration - REPLACE WITH YOUR CONFIG
+       const firebaseConfig = {
+  apiKey: "AIzaSyCPrnUhVMHFTcWei6nhEHBcSxAe6FGslvc",
+  authDomain: "braindump-b48e9.firebaseapp.com",
+  projectId: "braindump-b48e9",
+  storageBucket: "braindump-b48e9.firebasestorage.app",
+  messagingSenderId: "782569772688",
+  appId: "1:782569772688:web:8daffe9fb07dd0f206aa15"
+};
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+
+        // Global variables
         let thoughts = [];
         let currentFilter = 'all';
+        let currentUser = null;
+        let unsubscribe = null;
 
-        // Load thoughts from localStorage
-        function loadThoughts() {
-            const saved = localStorage.getItem('brainDumpThoughts');
-            if (saved) {
-                thoughts = JSON.parse(saved);
-                displayThoughts();
-                updateStats();
+        // Make functions globally available
+        window.signInWithGoogle = signInWithGoogle;
+        window.signOut = signOut;
+        window.addQuickThought = addQuickThought;
+        window.addMainThought = addMainThought;
+        window.handleQuickEnter = handleQuickEnter;
+        window.toggleProcessed = toggleProcessed;
+        window.deleteThought = deleteThought;
+        window.filterThoughts = filterThoughts;
+        window.exportThoughts = exportThoughts;
+
+        // Authentication functions
+        async function signInWithGoogle() {
+            try {
+                await signInWithPopup(auth, provider);
+            } catch (error) {
+                showError('Failed to sign in: ' + error.message);
             }
         }
 
-        // Save thoughts to localStorage
-        function saveThoughts() {
-            localStorage.setItem('brainDumpThoughts', JSON.stringify(thoughts));
+        async function signOut() {
+            try {
+                await firebaseSignOut(auth);
+            } catch (error) {
+                showError('Failed to sign out: ' + error.message);
+            }
+        }
+
+        // Auth state observer
+        onAuthStateChanged(auth, (user) => {
+            currentUser = user;
+            if (user) {
+                document.getElementById('signedOut').style.display = 'none';
+                document.getElementById('signedIn').style.display = 'block';
+                document.getElementById('userName').textContent = user.displayName;
+                document.getElementById('userEmail').textContent = user.email;
+                document.getElementById('userAvatar').src = user.photoURL;
+                loadThoughts();
+                updateSyncStatus('online');
+            } else {
+                document.getElementById('signedOut').style.display = 'block';
+                document.getElementById('signedIn').style.display = 'none';
+                if (unsubscribe) {
+                    unsubscribe();
+                    unsubscribe = null;
+                }
+                thoughts = [];
+                displayThoughts();
+                updateStats();
+                updateSyncStatus('offline');
+            }
+        });
+
+        function updateSyncStatus(status) {
+            const statusEl = document.getElementById('syncStatus');
+            if (status === 'online') {
+                statusEl.className = 'sync-status online';
+                statusEl.innerHTML = '✅ Connected - Syncing across devices';
+            } else {
+                statusEl.className = 'sync-status offline';
+                statusEl.innerHTML = '⚠️ Sign in to sync across devices';
+            }
+        }
+
+        function showError(message) {
+            const errorEl = document.getElementById('errorMessage');
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+            setTimeout(() => {
+                errorEl.style.display = 'none';
+            }, 5000);
+        }
+
+        // Firestore functions
+        function loadThoughts() {
+            if (!currentUser) return;
+
+            document.getElementById('loading').style.display = 'block';
+            
+            const q = query(
+                collection(db, 'thoughts'),
+                where('userId', '==', currentUser.uid),
+                orderBy('createdAt', 'desc')
+            );
+
+            unsubscribe = onSnapshot(q, (snapshot) => {
+                thoughts = snapshot.docs.map(doc => ({
+                    id: doc.id,
+                    ...doc.data()
+                }));
+                
+                document.getElementById('loading').style.display = 'none';
+                displayThoughts();
+                updateStats();
+                
+                if (thoughts.length > 0) {
+                    document.getElementById('exportBtn').style.display = 'block';
+                }
+            }, (error) => {
+                document.getElementById('loading').style.display = 'none';
+                showError('Failed to load thoughts: ' + error.message);
+            });
+        }
+
+        async function addThought(text) {
+            if (!currentUser) {
+                showError('Please sign in to save thoughts');
+                return;
+            }
+
+            if (!text.trim()) return;
+
+            const buttons = document.querySelectorAll('.add-btn');
+            buttons.forEach(btn => btn.disabled = true);
+
+            try {
+                await addDoc(collection(db, 'thoughts'), {
+                    userId: currentUser.uid,
+                    text: text.trim(),
+                    category: categorizeThought(text),
+                    createdAt: serverTimestamp(),
+                    processed: false
+                });
+            } catch (error) {
+                showError('Failed to save thought: ' + error.message);
+            } finally {
+                buttons.forEach(btn => btn.disabled = false);
+            }
+        }
+
+        async function toggleProcessed(id) {
+            if (!currentUser) return;
+
+            const buttons = document.querySelectorAll(`[onclick*="${id}"]`);
+            buttons.forEach(btn => btn.disabled = true);
+
+            try {
+                const thought = thoughts.find(t => t.id === id);
+                if (thought) {
+                    await updateDoc(doc(db, 'thoughts', id), {
+                        processed: !thought.processed
+                    });
+                }
+            } catch (error) {
+                showError('Failed to update thought: ' + error.message);
+            } finally {
+                buttons.forEach(btn => btn.disabled = false);
+            }
+        }
+
+        async function deleteThought(id) {
+            if (!currentUser) return;
+            if (!confirm('Are you sure you want to delete this thought?')) return;
+
+            const buttons = document.querySelectorAll(`[onclick*="${id}"]`);
+            buttons.forEach(btn => btn.disabled = true);
+
+            try {
+                await deleteDoc(doc(db, 'thoughts', id));
+            } catch (error) {
+                showError('Failed to delete thought: ' + error.message);
+                buttons.forEach(btn => btn.disabled = false);
+            }
         }
 
         // Categorize thoughts based on keywords
@@ -117,23 +348,6 @@
             return 'random';
         }
 
-        function addThought(text) {
-            if (text.trim()) {
-                const thought = {
-                    id: Date.now(),
-                    text: text.trim(),
-                    category: categorizeThought(text),
-                    timestamp: new Date().toLocaleTimeString(),
-                    processed: false
-                };
-                thoughts.unshift(thought);
-                saveThoughts();
-                displayThoughts();
-                updateStats();
-                document.getElementById('exportBtn').style.display = 'block';
-            }
-        }
-
         function addQuickThought() {
             const input = document.getElementById('quickInput');
             addThought(input.value);
@@ -151,23 +365,6 @@
             if (event.key === 'Enter') {
                 addQuickThought();
             }
-        }
-
-        function toggleProcessed(id) {
-            const thought = thoughts.find(t => t.id === id);
-            if (thought) {
-                thought.processed = !thought.processed;
-                saveThoughts();
-                displayThoughts();
-                updateStats();
-            }
-        }
-
-        function deleteThought(id) {
-            thoughts = thoughts.filter(t => t.id !== id);
-            saveThoughts();
-            displayThoughts();
-            updateStats();
         }
 
         function updateStats() {
@@ -204,31 +401,40 @@
                 }
             }
 
-            if (filtered.length === 0) {
+            if (filtered.length === 0 && currentUser) {
                 container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;"><h3>No thoughts yet!</h3><p>Start dumping your thoughts above.</p></div>';
+                return;
+            } else if (filtered.length === 0) {
+                container.innerHTML = '<div style="text-align: center; padding: 50px; color: #666;"><h3>Sign in to see your thoughts</h3><p>Your thoughts will sync across all your devices.</p></div>';
                 return;
             }
 
-            container.innerHTML = filtered.map(thought => `
-                <div class="thought ${thought.category} ${thought.processed ? 'processed' : ''}">
-                    <div class="category-tag">${thought.category}</div>
-                    <div class="timestamp">${thought.timestamp}</div>
-                    <div style="margin-top: 10px;">${thought.text}</div>
-                    <div class="controls">
-                        <button class="control-btn" onclick="toggleProcessed(${thought.id})">
-                            ${thought.processed ? '↶ Unprocess' : '✓ Processed'}
-                        </button>
-                        <button class="control-btn" onclick="deleteThought(${thought.id})">🗑 Delete</button>
+            container.innerHTML = filtered.map(thought => {
+                const timestamp = thought.createdAt ? new Date(thought.createdAt.seconds * 1000).toLocaleString() : 'Now';
+                return `
+                    <div class="thought ${thought.category} ${thought.processed ? 'processed' : ''}">
+                        <div class="category-tag">${thought.category}</div>
+                        <div class="timestamp">${timestamp}</div>
+                        <div style="margin-top: 10px;">${thought.text}</div>
+                        <div class="controls">
+                            <button class="control-btn" onclick="toggleProcessed('${thought.id}')">
+                                ${thought.processed ? '↶ Unprocess' : '✓ Processed'}
+                            </button>
+                            <button class="control-btn" onclick="deleteThought('${thought.id}')">🗑 Delete</button>
+                        </div>
                     </div>
-                </div>
-            `).join('');
+                `;
+            }).join('');
         }
 
         function exportThoughts() {
             const data = {
                 exportDate: new Date().toISOString(),
                 totalThoughts: thoughts.length,
-                thoughts: thoughts
+                thoughts: thoughts.map(t => ({
+                    ...t,
+                    createdAt: t.createdAt ? new Date(t.createdAt.seconds * 1000).toISOString() : null
+                }))
             };
             
             const blob = new Blob([JSON.stringify(data, null, 2)], {type: 'application/json'});
@@ -241,7 +447,6 @@
         }
 
         // Initialize
-        loadThoughts();
         document.getElementById('quickInput').focus();
     </script>
 </body>
